@@ -1,0 +1,4 @@
+python-dotenv
+moviepy
+redis
+boto3
