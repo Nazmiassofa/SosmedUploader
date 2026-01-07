@@ -207,10 +207,6 @@ class AutoUploader:
                         prefix="facebook:daily_posts",
                         )
                     
-                    log.info(
-                        f"[ FACEBOOK ] Successfully uploaded post: {post_id} | "
-                        f"Position: {position or 'N/A'}"
-                    )
                             
                 # if self.ig_uploader:
                 #     await loop.run_in_executor(
