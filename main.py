@@ -133,11 +133,27 @@ class AutoUploader:
     async def _handle_payload(self, payload: dict):
         """
         Handle incoming job vacancy payload from Redis
+        
+        
+         video_payload = {
+                "type": "video_ready",
+                "source": "video_worker",
+                "timestamp": payload.get("timestamp"),
+                "video": {
+                    "path": video_url,
+                    "format": "mp4",
+                },
+            }
+        
         """
         if payload.get("type") == "video_ready":
-            video_url = payload.get("video_url")
+            video = payload.get("video", {})
+            video_url = video.get("path")
+
             if video_url:
-                log.warning(f"[ VIDEO READY ] -- url : {video_url}")
+                log.warning(f"[ VIDEO URL ] -- url : {video_url}")
+            else:
+                log.warning("[ VIDEO URL ] -- video path not found")
 
         
         extracted = self._validate_job_vacancy_payload(payload)
