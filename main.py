@@ -29,7 +29,7 @@ class AutoUploader:
         self.shutdown_lock = asyncio.Lock()
         self.stopped = False
         self.redis = None
-        self.upload = None
+        self.storage = None
         
         self.subscriber: Optional[RedisSubscriber] = None
         self.stats_task : Optional[R2UploaderService] = None
@@ -55,15 +55,15 @@ class AutoUploader:
             page_access_token=config.PAGE_ACCESS_TOKEN,
         )
         
-        self.upload = R2UploaderService(
+        self.storage = R2UploaderService(
             account_id=config.R2_ACCOUNT_ID,
             access_key=config.R2_ACCESS_KEY,
             secret_key=config.R2_SECRET_KEY
         )
         
         self.ig_uploader = InstagramUploader(
-            ig_user_id=config.IG_USER_ID,
-            access_token=config.IG_ACCESS_TOKEN,
+            ig_page_id=config.PAGE_ID,
+            access_token=config.PAGE_ACCESS_TOKEN
         )
 
         
@@ -135,7 +135,7 @@ class AutoUploader:
         Handle incoming job vacancy payload from Redis
         
         
-         video_payload = {
+            video_ready payload = {
                 "type": "video_ready",
                 "source": "video_worker",
                 "timestamp": payload.get("timestamp"),
@@ -144,16 +144,50 @@ class AutoUploader:
                     "format": "mp4",
                 },
             }
+            
+            job_vacancy payload = { 
+            "type": "job_vacancy", 
+            "source": payload.get("source"), 
+            "timestamp": payload.get("timestamp"), 
+            "caption": payload.get("caption"), 
+            "image": image_base64, "extracted_data": extracted_data, } 
+
+            extracted_data sample = { 
+            "is_job_vacancy": true, 
+            "email": ["recruitment@startup.id"], 
+            "position": "Backend Developer", 
+            "subject_email": "Backend Developer - {{name}} - {{phone}}", "gender_required": null }
         
         """
         if payload.get("type") == "video_ready":
             video = payload.get("video", {})
             video_url = video.get("path")
-
-            if video_url:
-                log.warning(f"[ VIDEO URL ] -- url : {video_url}")
-            else:
+            
+            if not video_url:
                 log.warning("[ VIDEO URL ] -- video path not found")
+                return
+            
+            loop = asyncio.get_running_loop()
+
+            try:
+                if self.fb_uploader:
+                    await loop.run_in_executor(
+                        None,
+                        self.fb_uploader.upload_video_from_url,
+                        video_url,
+                        "Rangkuman informasi lowongan kerja hari ini",
+                        "INFO LOWONGAN KERJA HARI INI",
+                    )
+                    await asyncio.sleep(30)
+            finally:
+                if self.storage:
+                    await loop.run_in_executor(
+                        None,
+                        self.storage.clean_video,
+                        video_url
+                    )
+                    
+            return
 
         
         extracted = self._validate_job_vacancy_payload(payload)
@@ -181,10 +215,10 @@ class AutoUploader:
                 gender_required: str | None = extracted.get("gender_required")
                 
                 # upload to r2 storage
-                if self.upload:
+                if self.storage:
                     image_url = await loop.run_in_executor(
                         None,
-                        self.upload.upload_base64_image,
+                        self.storage.upload_base64_image,
                         image_base64,
                     )
                 

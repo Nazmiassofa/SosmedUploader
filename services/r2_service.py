@@ -50,3 +50,38 @@ class R2UploaderService:
         )
 
         return f"{self.public_base}/{key}"
+    
+    
+    def clean_video(self, video_url: str) -> bool:
+        """
+        Delete video object from R2 using public URL
+
+        Args:
+            video_url: Public video URL from R2
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+
+        if not self.public_base:
+            raise ValueError("public_base_url is not configured")
+
+        if not video_url.startswith(self.public_base):
+            raise ValueError("Video URL does not belong to this R2 public base")
+
+        # Extract object key from URL
+        key = video_url.replace(self.public_base + "/", "", 1)
+
+        if not key:
+            raise ValueError("Invalid video URL, cannot extract object key")
+
+        try:
+            self.client.delete_object(
+                Bucket=self.bucket,
+                Key=key,
+            )
+
+            return True
+
+        except Exception as e:
+            raise RuntimeError(f"Failed to delete video from R2: {e}")

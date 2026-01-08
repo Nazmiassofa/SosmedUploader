@@ -15,16 +15,16 @@ BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 class InstagramUploader:
     def __init__(
         self,
-        ig_user_id: str,
+        ig_page_id: str,
         access_token: str,
         base_url: str = BASE_URL,
         timeout: int = 30,
     ):
-        self.ig_user_id = ig_user_id
+        self.ig_user_id = ig_page_id
         self.token = access_token
         self.base_url = base_url
         self.timeout = timeout
-
+        
     # ==========================================================
     # Caption Builder (reuse logic dari Facebook)
     # ==========================================================

@@ -19,3 +19,4 @@ log
 *.log
 .vscode/
 .idea/
+test.py

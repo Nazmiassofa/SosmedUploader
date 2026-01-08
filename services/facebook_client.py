@@ -58,35 +58,35 @@ class FacebookUploader:
         # Add separator if we have details
         if has_details:
             lines.append("")
-            lines.append("─" * 30)
         
         return "\n".join(lines)
     
-    def upload_video(
+    def upload_video_from_url(
         self,
-        video_path: str,
+        video_url: str,
         description: Optional[str] = None,
         title: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Upload video to Facebook Page
+        Upload video to Facebook Page using remote URL
 
         Args:
-            video_path: path to mp4 video
-            description: video description / caption
-            title: video title
+            video_url: Publicly accessible video URL (mp4 recommended)
+            description: Video description / caption
+            title: Video title
 
         Returns:
             Facebook API response
         """
 
-        if not os.path.exists(video_path):
-            raise FileNotFoundError(f"Video not found: {video_path}")
+        if not video_url.startswith(("http://", "https://")):
+            raise ValueError("video_url must be a valid public URL")
 
         url = f"{self.base_url}/{self.page_id}/videos"
 
         data = {
             "access_token": self.token,
+            "file_url": video_url,
         }
 
         if description:
@@ -95,47 +95,39 @@ class FacebookUploader:
         if title:
             data["title"] = title
 
-        log.info(f"[ FACEBOOK ] Uploading video: {video_path}")
+        log.info(f"[ FACEBOOK ] Uploading video from URL: {video_url}")
 
         try:
-            with open(video_path, "rb") as f:
-                files = {
-                    "source": f
-                }
-
-                resp = requests.post(
-                    url,
-                    files=files,
-                    data=data,
-                    timeout=600,  # video upload lebih lama
-                )
+            resp = requests.post(
+                url,
+                data=data,
+                timeout=600,  # remote fetch bisa lama
+            )
 
             if resp.status_code != 200:
                 log.error(
-                    f"[ FACEBOOK ] Video upload failed: "
+                    f"[ FACEBOOK ] Video URL upload failed: "
                     f"{resp.status_code} - {resp.text}"
                 )
 
             resp.raise_for_status()
-
             result = resp.json()
 
             log.info(
-                f"[ FACEBOOK ] Video upload successful: video_id={result.get('id')}"
+                f"[ FACEBOOK ] Video URL upload successful: video_id={result.get('id')}"
             )
 
             return result
 
         except requests.exceptions.Timeout:
-            log.error("[ FACEBOOK ] Video upload timeout")
+            log.error("[ FACEBOOK ] Video URL upload timeout")
             raise
 
         except requests.exceptions.RequestException as e:
-            log.error(f"[ FACEBOOK ] Video upload request failed: {e}")
+            log.error(f"[ FACEBOOK ] Video URL upload request failed: {e}")
             if hasattr(e, "response") and e.response is not None:
                 log.error(f"[ FACEBOOK ] Response: {e.response.text}")
             raise
-    
 
     def upload_image(self,
                     image_base64: str,
