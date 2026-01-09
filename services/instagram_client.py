@@ -15,12 +15,12 @@ BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 class InstagramUploader:
     def __init__(
         self,
-        ig_page_id: str,
+        instagram_id: str,
         access_token: str,
         base_url: str = BASE_URL,
         timeout: int = 30,
     ):
-        self.ig_user_id = ig_page_id
+        self.ig_user_id = instagram_id
         self.token = access_token
         self.base_url = base_url
         self.timeout = timeout
@@ -81,7 +81,55 @@ class InstagramUploader:
         return resp.json()["id"]
 
     # ==========================================================
-    # Step 2: Publish Media
+    # Step 2: Check Media Status (for video)
+    # ==========================================================
+    def _check_media_status(
+        self, 
+        creation_id: str, 
+        max_attempts: int = 30,
+        wait_seconds: int = 10
+    ) -> bool:
+        """
+        Check if media container is ready to publish.
+        Returns True when ready, False if timeout.
+        """
+        url = f"{self.base_url}/{creation_id}"
+        
+        for attempt in range(max_attempts):
+            try:
+                resp = requests.get(
+                    url,
+                    params={
+                        "fields": "status_code",
+                        "access_token": self.token,
+                    },
+                    timeout=self.timeout,
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    status = data.get("status_code")
+                    
+                    log.info(f"[ INSTAGRAM ] Media status check {attempt + 1}/{max_attempts}: {status}")
+                    
+                    if status == "FINISHED":
+                        return True
+                    elif status == "ERROR":
+                        log.error(f"[ INSTAGRAM ] Media processing error")
+                        return False
+                    # Status IN_PROGRESS or EXPIRED - continue waiting
+                    
+            except Exception as e:
+                log.warning(f"[ INSTAGRAM ] Status check error: {e}")
+            
+            if attempt < max_attempts - 1:
+                time.sleep(wait_seconds)
+        
+        log.warning(f"[ INSTAGRAM ] Media not ready after {max_attempts * wait_seconds}s")
+        return False
+
+    # ==========================================================
+    # Step 3: Publish Media
     # ==========================================================
     def _publish_media(self, creation_id: str) -> Dict[str, Any]:
         url = f"{self.base_url}/{self.ig_user_id}/media_publish"
@@ -127,25 +175,25 @@ class InstagramUploader:
 
         if not public_image_url:
             raise ValueError(
-                "Instagram Graph API requires public image_url (CDN / S3 / Cloudflare)"
+                "Instagram Graph API requires public image_url"
             )
 
-        log.info("[ INSTAGRAM ] Creating media container")
+        log.info("[ INSTAGRAM ] Creating image media container")
 
         creation_id = self._create_image_container(
             image_url=public_image_url,
             caption=caption,
         )
 
-        
+        # Images usually process quickly, small delay is enough
         time.sleep(2)
 
-        log.info("[ INSTAGRAM ] Publishing media")
+        log.info("[ INSTAGRAM ] Publishing image media")
 
         result = self._publish_media(creation_id)
 
         log.info(
-            f"[ INSTAGRAM ] Upload success: media_id={result.get('id')}"
+            f"[ INSTAGRAM ] Image upload success: media_id={result.get('id')}"
         )
 
         return result
@@ -157,12 +205,20 @@ class InstagramUploader:
         self,
         video_url: str,
         caption: str,
+        max_wait_minutes: int = 5,
     ) -> Dict[str, Any]:
         """
         Upload video (Reels)
 
         video_url MUST be publicly accessible
+        
+        Args:
+            video_url: Public URL to video file
+            caption: Caption for the reel
+            max_wait_minutes: Maximum minutes to wait for video processing (default 5)
         """
+
+        log.info("[ INSTAGRAM ] Creating video media container")
 
         url = f"{self.base_url}/{self.ig_user_id}/media"
 
@@ -182,10 +238,32 @@ class InstagramUploader:
             resp.raise_for_status()
 
         creation_id = resp.json()["id"]
+        log.info(f"[ INSTAGRAM ] Video container created: {creation_id}")
 
-        time.sleep(5)
+        # Wait for video to be processed
+        log.info("[ INSTAGRAM ] Waiting for video processing...")
+        max_attempts = (max_wait_minutes * 60) // 10  # Check every 10 seconds
+        
+        is_ready = self._check_media_status(
+            creation_id, 
+            max_attempts=max_attempts,
+            wait_seconds=10
+        )
 
-        return self._publish_media(creation_id)
+        if not is_ready:
+            raise RuntimeError(
+                f"Video not ready after {max_wait_minutes} minutes. "
+                "Try again later or check video format/size."
+            )
+
+        log.info("[ INSTAGRAM ] Video ready, publishing...")
+        result = self._publish_media(creation_id)
+
+        log.info(
+            f"[ INSTAGRAM ] Video upload success: media_id={result.get('id')}"
+        )
+
+        return result
 
     # ==========================================================
     # Test Connection

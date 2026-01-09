@@ -16,13 +16,12 @@ class Settings:
     REDIS_CHANNEL: str = os.getenv("REDIS_CHANNEL", "")
     REDIS_LIMIT: int = int(os.getenv("REDIS_LIMIT", "25"))
     
-    # Facebook Access
-    PAGE_ID : str = os.getenv("PAGE_ID", "")
-    PAGE_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
+    # Meta Access
+    FACEBOOK_PAGE_ID : str = os.getenv("FACEBOOK_PAGE_ID", "")
 
-    # Instagram Access
-    IG_USER_ID : str = os.getenv("IG_USER_ID", "")
-    IG_ACCESS_TOKEN : str = os.getenv("IG_ACCESS_TOKEN", "")
+    INSTAGRAM_ID : str = os.getenv("INSTAGRAM_ID", "")    
+    ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
+    
 
     # Environment
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "DEV")
