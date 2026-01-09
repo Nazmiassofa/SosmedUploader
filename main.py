@@ -53,7 +53,7 @@ class AutoUploader:
         # Initialize Facebook Uploader
         self.fb_uploader = FacebookUploader(
             page_id=config.FACEBOOK_PAGE_ID,  # Fixed: consistent naming
-            page_access_token=config.ACCESS_TOKEN,  # Fixed: use dedicated token
+            page_access_token=config.FB_ACCESS_TOKEN,  # Fixed: use dedicated token
         )
         
         # Initialize R2 Storage
@@ -66,7 +66,7 @@ class AutoUploader:
         # Initialize Instagram Uploader
         self.ig_uploader = InstagramUploader(
             instagram_id=config.INSTAGRAM_ID,
-            access_token=config.ACCESS_TOKEN  # Fixed: use dedicated token
+            access_token=config.IG_ACCESS_TOKEN  # Fixed: use dedicated token
         )
 
         # Test connections

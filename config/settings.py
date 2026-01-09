@@ -18,9 +18,11 @@ class Settings:
     
     # Meta Access
     FACEBOOK_PAGE_ID : str = os.getenv("FACEBOOK_PAGE_ID", "")
+    FB_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN", "")
 
-    INSTAGRAM_ID : str = os.getenv("INSTAGRAM_ID", "")    
-    ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
+    INSTAGRAM_ID : str = os.getenv("INSTAGRAM_ID", "")
+    IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN", "")    
+    
     
 
     # Environment
