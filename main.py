@@ -164,7 +164,6 @@ class AutoUploader:
             video_url = video.get("path")
             
             if not video_url:
-                log.warning("[ VIDEO URL ] -- video path not found")
                 return
             
             loop = asyncio.get_running_loop()
