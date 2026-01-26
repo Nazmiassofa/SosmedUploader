@@ -14,7 +14,7 @@ class R2UploaderService:
         access_key: str,
         secret_key: str,
         bucket: Optional[str] = "media-job",
-        public_base_url: Optional[str] = "https://media.voisacommunity.online",
+        public_base_url: Optional[str] = "https://media.voisaretired.online",
     ):
         self.bucket = bucket
         self.public_base = public_base_url.rstrip("/") if public_base_url else None

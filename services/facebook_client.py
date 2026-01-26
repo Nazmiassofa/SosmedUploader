@@ -270,3 +270,6 @@ class FacebookUploader:
         except Exception as e:
             log.error(f"[ FACEBOOK ] Connection test failed: {e}")
             return False
+        
+        
+
