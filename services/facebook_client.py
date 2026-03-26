@@ -17,12 +17,12 @@ class FacebookUploader:
     def __init__(
         self,
         page_id: str,
-        page_access_token: str,
+        access_token: str,
         base_url: str = BASE_URL,
         timeout: int = 30
     ):  
         self.page_id = page_id
-        self.token = page_access_token
+        self.token = access_token
         self.base_url = base_url
         self.timeout = timeout
 

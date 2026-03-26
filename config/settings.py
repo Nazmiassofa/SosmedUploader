@@ -18,13 +18,9 @@ class Settings:
     
     # Meta Access
     FACEBOOK_PAGE_ID : str = os.getenv("FACEBOOK_PAGE_ID", "")
-    FB_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN", "")
-
     INSTAGRAM_ID : str = os.getenv("INSTAGRAM_ID", "")
-    IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN", "")    
+    META_ACCESS_TOKEN : str = os.getenv("META_ACCESS_TOKEN", "")
     
-    
-
     # Environment
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "DEV")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -45,6 +41,10 @@ class Settings:
             required = {
                 "REDIS_HOST": self.REDIS_HOST,
                 "REDIS_PASSWORD": self.REDIS_PASSWORD,
+                "ENVIRONMENT": self.ENVIRONMENT,
+                "FACEBOOK_PAGE_ID": self.FACEBOOK_PAGE_ID,
+                "INSTAGRAM_ID": self.INSTAGRAM_ID,
+                "META_ACCESS_TOKEN": self.META_ACCESS_TOKEN,
             }
             missing = [k for k, v in required.items() if not v]
             if missing:

@@ -14,6 +14,7 @@ from services import (
     InstagramUploader,
     R2UploaderService,
     ImageProcessor,
+    FacebookUploader,
     
     can_post_today,
     increment_daily_post,
@@ -35,6 +36,7 @@ class AutoUploader:
         self.subscriber: Optional[RedisSubscriber] = None
         self.stats_task : Optional[R2UploaderService] = None
         self.ig_uploader: Optional[InstagramUploader] = None
+        self.fb_uploader: Optional[FacebookUploader] = None
         self.image_processor: Optional[ImageProcessor] = None
 
 
@@ -51,9 +53,6 @@ class AutoUploader:
         # Initialize Redis
         self.redis = await redis.init_redis()
         
-        
-        self.fb_uploader = None
-        
         self.image_processor = ImageProcessor(target_mode="auto")
         
         # Initialize R2 Storage
@@ -63,15 +62,32 @@ class AutoUploader:
             secret_key=config.R2_SECRET_KEY
         )
         
+        # initalite Facebook Uploader
+        self.fb_uploader = FacebookUploader(
+            page_id=config.FACEBOOK_PAGE_ID,
+            access_token=config.META_ACCESS_TOKEN
+        )
+
         # Initialize Instagram Uploader
         self.ig_uploader = InstagramUploader(
             instagram_id=config.INSTAGRAM_ID,
-            access_token=config.IG_ACCESS_TOKEN  # Fixed: use dedicated token
+            access_token=config.META_ACCESS_TOKEN 
         )
 
         # Test connections
         loop = asyncio.get_running_loop()
         
+        # Test Facebook connection
+        if self.fb_uploader:
+            fb_ok = await loop.run_in_executor(
+                None,
+                self.fb_uploader.test_connection,
+            )
+            
+            if not fb_ok:
+                log.warning("[ AUTO UPLOADER ] Facebook connection failed")
+                self.fb_uploader = None
+
         # Test Instagram connection
         if self.ig_uploader:
             ig_ok = await loop.run_in_executor(
@@ -157,6 +173,22 @@ class AutoUploader:
                 
         except Exception as e:
             log.error(f"[ AUTO UPLOADER ] Instagram video upload failed: {e}", exc_info=True)
+
+        # Upload to Facebook
+        try:
+            if self.fb_uploader:
+                log.info("[ AUTO UPLOADER ] Uploading video to Facebook...")
+                await loop.run_in_executor(
+                    None,
+                    self.fb_uploader.upload_video_from_url,
+                    video_url,
+                    video_caption,
+                    "Rangkuman Lowongan Kerja Hari Ini"
+                )
+                log.info("[ AUTO UPLOADER ] Facebook video upload complete")
+
+        except Exception as e:
+            log.error(f"[ AUTO UPLOADER ] Facebook video upload failed: {e}", exc_info=True)
         
         # Clean up video from R2
         finally:
@@ -351,6 +383,24 @@ class AutoUploader:
                     
             except Exception as e:
                 log.error(f"[ AUTO UPLOADER ] Instagram upload failed: {e}", exc_info=True)
+
+            # ============================================================
+            # STEP 4: Upload to Facebook using R2 URL
+            try:
+                if self.fb_uploader and image_url:
+                    log.info("[ AUTO UPLOADER ] Uploading to Facebook...")
+        
+                    result = await loop.run_in_executor(
+                        None,
+                        self.fb_uploader.upload_image,
+                        image_base64,
+                        position,
+                        emails,
+                        gender_required,
+                    )
+            
+            except Exception as e:
+                log.error(f"[ AUTO UPLOADER ] Facebook upload failed: {e}", exc_info=True)
 
         except Exception as e:
             log.error(
