@@ -17,9 +17,10 @@ class Settings:
     REDIS_LIMIT: int = int(os.getenv("REDIS_LIMIT", "25"))
     
     # Meta Access
-    FACEBOOK_PAGE_ID : str = os.getenv("FACEBOOK_PAGE_ID", "")
     INSTAGRAM_ID : str = os.getenv("INSTAGRAM_ID", "")
-    META_ACCESS_TOKEN : str = os.getenv("META_ACCESS_TOKEN", "")
+    INSTAGRAM_ACCESS_TOKEN : str = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
+    FACEBOOK_PAGE_ID : str = os.getenv("FACEBOOK_PAGE_ID", "")
+    FACEBOOK_ACCESS_TOKEN : str = os.getenv("FACEBOOK_ACCESS_TOKEN", "")
     
     # Environment
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "DEV")

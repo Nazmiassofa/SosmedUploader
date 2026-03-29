@@ -65,13 +65,13 @@ class AutoUploader:
         # initalite Facebook Uploader
         self.fb_uploader = FacebookUploader(
             page_id=config.FACEBOOK_PAGE_ID,
-            access_token=config.META_ACCESS_TOKEN
+            access_token=config.FACEBOOK_ACCESS_TOKEN
         )
 
         # Initialize Instagram Uploader
         self.ig_uploader = InstagramUploader(
             instagram_id=config.INSTAGRAM_ID,
-            access_token=config.META_ACCESS_TOKEN 
+            access_token=config.INSTAGRAM_ACCESS_TOKEN 
         )
 
         # Test connections
