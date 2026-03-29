@@ -45,8 +45,8 @@ class Settings:
                 "ENVIRONMENT": self.ENVIRONMENT,
                 "FACEBOOK_PAGE_ID": self.FACEBOOK_PAGE_ID,
                 "INSTAGRAM_ID": self.INSTAGRAM_ID,
-                "META_ACCESS_TOKEN": self.META_ACCESS_TOKEN,
-            }
+                "FACEBOOK_ACCESS_TOKEN": self.FACEBOOK_ACCESS_TOKEN,
+                "INSTAGRAM_ACCESS_TOKEN": self.INSTAGRAM_ACCESS_TOKEN,}
             missing = [k for k, v in required.items() if not v]
             if missing:
                 raise RuntimeError(
