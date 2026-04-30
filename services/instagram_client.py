@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, List
 
 log = logging.getLogger(__name__)
 
-API_VERSION = "v24.0"
+API_VERSION = "v25.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
 

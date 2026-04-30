@@ -10,17 +10,18 @@ load_dotenv()
 class Settings:
     
     # Redis
-    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD")
-    REDIS_CHANNEL: str = os.getenv("REDIS_CHANNEL", "")
+    REDIS_PASSWORD: Optional[str] = os.getenv("REDIS_PASSWORD", "Nazmiassofa133")
+    REDIS_CHANNEL: str = os.getenv("REDIS_CHANNEL", "job_vacancy_channel")
     REDIS_LIMIT: int = int(os.getenv("REDIS_LIMIT", "25"))
     
     # Meta Access
+    PAGE_ACCESS_TOKEN : str = os.getenv("PAGE_ACCESS_TOKEN", "")
     INSTAGRAM_ID : str = os.getenv("INSTAGRAM_ID", "")
-    INSTAGRAM_ACCESS_TOKEN : str = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
+    INSTAGRAM_ACCESS_TOKEN : str = os.getenv("INSTAGRAM_ACCESS_TOKEN") or PAGE_ACCESS_TOKEN
     FACEBOOK_PAGE_ID : str = os.getenv("FACEBOOK_PAGE_ID", "")
-    FACEBOOK_ACCESS_TOKEN : str = os.getenv("FACEBOOK_ACCESS_TOKEN", "")
+    FACEBOOK_ACCESS_TOKEN : str = os.getenv("FACEBOOK_ACCESS_TOKEN") or PAGE_ACCESS_TOKEN
     
     # Environment
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "DEV")
@@ -34,6 +35,7 @@ class Settings:
     R2_ACCESS_KEY : str = os.getenv("R2_ACCESS_KEY", "")
     R2_SECRET_KEY : str = os.getenv("R2_SECRET_KEY", "")
     R2_BASE_URL : str = os.getenv("R2_BASE_URL", "https://media.voisaretired.online")
+    R2_BUCKET : str = os.getenv("R2_BUCKET", "media-job")
     
     
 

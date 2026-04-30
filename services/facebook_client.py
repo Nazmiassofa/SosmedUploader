@@ -10,7 +10,7 @@ from io import BytesIO
 
 log = logging.getLogger(__name__)
 
-API_VERSION = "v24.0"
+API_VERSION = "v25.0"
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
 class FacebookUploader:
@@ -123,10 +123,60 @@ class FacebookUploader:
             log.error("[ FACEBOOK ] Video URL upload timeout")
             raise
 
+    def upload_image_from_url(
+        self,
+        image_url: str,
+        position: Optional[str] = None,
+        emails: Optional[List[str]] = None,
+        gender_required: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Upload image to Facebook Page using a public URL
+        """
+        if not image_url.startswith(("http://", "https://")):
+            raise ValueError("image_url must be a valid public URL")
+
+        url = f"{self.base_url}/{self.page_id}/photos"
+
+        # Build structured caption
+        formatted_caption = self.build_job_caption(
+            position=position,
+            emails=emails,
+            gender_required=gender_required,
+        )
+
+        data = {
+            "access_token": self.token,
+            "url": image_url,
+            "message": formatted_caption,
+        }
+
+        log.info(f"[ FACEBOOK ] Uploading image from URL: {image_url}")
+
+        try:
+            resp = requests.post(
+                url,
+                data=data,
+                timeout=self.timeout,
+            )
+
+            if resp.status_code != 200:
+                log.error(
+                    f"[ FACEBOOK ] Image URL upload failed: "
+                    f"{resp.status_code} - {resp.text}"
+                )
+
+            resp.raise_for_status()
+            result = resp.json()
+
+            log.info(
+                f"[ FACEBOOK ] Image URL upload successful: id={result.get('id')}"
+            )
+
+            return result
+
         except requests.exceptions.RequestException as e:
-            log.error(f"[ FACEBOOK ] Video URL upload request failed: {e}")
-            if hasattr(e, "response") and e.response is not None:
-                log.error(f"[ FACEBOOK ] Response: {e.response.text}")
+            log.error(f"[ FACEBOOK ] Image URL upload failed: {e}")
             raise
 
     def upload_image(self,

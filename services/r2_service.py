@@ -14,7 +14,7 @@ class R2UploaderService:
         access_key: str,
         secret_key: str,
         bucket: Optional[str] = "media-job",
-        public_base_url: Optional[str] = "https://media.voisaretired.online",
+        public_base_url: Optional[str] = "https://media.mailezz.com",
     ):
         self.bucket = bucket
         self.public_base = public_base_url.rstrip("/") if public_base_url else None
@@ -49,6 +49,25 @@ class R2UploaderService:
             ContentType=content_type,
             ACL="public-read",
         )
+
+        return f"{self.public_base}/{key}"
+
+    def upload_video(
+        self,
+        file_path: str,
+        folder: str = "jobs/videos"
+    ) -> str:
+        filename = f"{uuid.uuid4().hex}.mp4"
+        key = f"{folder}/{filename}"
+
+        with open(file_path, "rb") as f:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=f,
+                ContentType="video/mp4",
+                ACL="public-read",
+            )
 
         return f"{self.public_base}/{key}"
     
