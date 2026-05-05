@@ -25,7 +25,6 @@ async def init_redis() -> Redis:
             decode_responses=False,
             socket_connect_timeout=5,
             socket_timeout=5,
-            retry_on_timeout=True,
             health_check_interval=30,
         )
         
@@ -80,7 +79,6 @@ async def _health_check_loop(interval: int = 60) -> None:
                     decode_responses=False,
                     socket_connect_timeout=5,
                     socket_timeout=5,
-                    retry_on_timeout=True,
                     health_check_interval=30,
                 )
                 await redis_client.ping()
