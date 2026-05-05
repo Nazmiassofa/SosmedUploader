@@ -16,7 +16,9 @@ data
 *.session
 
 log
+logs/
 *.log
 .vscode/
 .idea/
 test.py
+scratch/

@@ -13,34 +13,39 @@ from services import (
     RedisSubscriber,
     InstagramUploader,
     R2UploaderService,
-    ImageProcessor,
     FacebookUploader,
     MediaService,
-    
-    can_post_today,
-    increment_daily_post,
 )
+from services.media import ImageProcessor
+
+from handlers import JobVacancyHandler, VideoHandler
 
 setup_logging()
 
 log = logging.getLogger(__name__)
 
+
 class AutoUploader:
     def __init__(self):
-        
         self.shutdown_event = asyncio.Event()
         self.shutdown_lock = asyncio.Lock()
         self.stopped = False
         self.redis = None
-        self.storage = None
-        
+        self.storage: Optional[R2UploaderService] = None
+
         self.subscriber: Optional[RedisSubscriber] = None
-        self.stats_task : Optional[R2UploaderService] = None
         self.ig_uploader: Optional[InstagramUploader] = None
         self.fb_uploader: Optional[FacebookUploader] = None
         self.image_processor: Optional[ImageProcessor] = None
         self.media: Optional[MediaService] = None
 
+        # Handlers
+        self.job_handler: Optional[JobVacancyHandler] = None
+        self.video_handler: Optional[VideoHandler] = None
+
+        # Prevent concurrent video generation
+        self._video_gen_lock = asyncio.Lock()
+        self._video_generating = False
 
     async def __aenter__(self):
         await self.start()
@@ -48,58 +53,63 @@ class AutoUploader:
 
     async def __aexit__(self, exc_type, exc, tb):
         await self.stop()
-   
+
     async def start(self):
         log.info("[ AUTO UPLOADER ] Starting up...")
 
         # Initialize Redis
         self.redis = await redis.init_redis()
-        
+
         self.image_processor = ImageProcessor(target_mode="auto")
-        
-        # Initialize R2 Storage
+
+        # Initialize R2 Storage (single instance for all services)
         self.storage = R2UploaderService(
             account_id=config.R2_ACCOUNT_ID,
             access_key=config.R2_ACCESS_KEY,
-            secret_key=config.R2_SECRET_KEY
+            secret_key=config.R2_SECRET_KEY,
+            bucket=config.R2_BUCKET,
+            public_base_url=config.R2_BASE_URL,
         )
-        
-        # initalite Facebook Uploader
+
+        # Initialize Facebook Uploader
         self.fb_uploader = FacebookUploader(
             page_id=config.FACEBOOK_PAGE_ID,
-            access_token=config.FACEBOOK_ACCESS_TOKEN
+            access_token=config.FACEBOOK_ACCESS_TOKEN,
         )
 
         # Initialize Instagram Uploader
         self.ig_uploader = InstagramUploader(
             instagram_id=config.INSTAGRAM_ID,
-            access_token=config.INSTAGRAM_ACCESS_TOKEN 
+            access_token=config.INSTAGRAM_ACCESS_TOKEN,
         )
 
-        # Test connections
-        loop = asyncio.get_running_loop()
-        
-        # Test Facebook connection
+        # Test connections (async now)
         if self.fb_uploader:
-            fb_ok = await loop.run_in_executor(
-                None,
-                self.fb_uploader.test_connection,
-            )
-            
+            fb_ok = await self.fb_uploader.test_connection()
             if not fb_ok:
                 log.warning("[ AUTO UPLOADER ] Facebook connection failed")
                 self.fb_uploader = None
 
-        # Test Instagram connection
         if self.ig_uploader:
-            ig_ok = await loop.run_in_executor(
-                None,
-                self.ig_uploader.test_connection,
-            )
-            
+            ig_ok = await self.ig_uploader.test_connection()
             if not ig_ok:
                 log.warning("[ AUTO UPLOADER ] Instagram connection failed")
                 self.ig_uploader = None
+
+        # Initialize handlers
+        self.video_handler = VideoHandler(
+            ig_uploader=self.ig_uploader,
+            fb_uploader=self.fb_uploader,
+            storage=self.storage,
+        )
+
+        self.job_handler = JobVacancyHandler(
+            redis=self.redis,
+            ig_uploader=self.ig_uploader,
+            fb_uploader=self.fb_uploader,
+            storage=self.storage,
+            image_processor=self.image_processor,
+        )
 
         # Start Redis subscriber
         self.subscriber = RedisSubscriber(
@@ -109,13 +119,14 @@ class AutoUploader:
             shutdown_event=self.shutdown_event,
         )
         await self.subscriber.start()
-        
-        # Initialize Media Service
+
+        # Initialize Media Service (shares R2 instance)
         self.media = MediaService(
-            min_images=10, 
-            duration_per_image=4.0
+            uploader=self.storage,
+            min_images=10,
+            duration_per_image=4.0,
         )
-        
+
         log.info("[ AUTO UPLOADER ] Startup complete")
 
     async def stop(self):
@@ -125,7 +136,7 @@ class AutoUploader:
             self.stopped = True
 
         log.info("[ AUTO UPLOADER ] Shutting down...")
-    
+
         self.shutdown_event.set()
 
         if self.subscriber:
@@ -134,349 +145,101 @@ class AutoUploader:
         if self.media:
             await self.media.cleanup()
 
+        # Close HTTP clients
+        if self.ig_uploader:
+            await self.ig_uploader.close()
+        if self.fb_uploader:
+            await self.fb_uploader.close()
+
         await redis.close_redis()
 
         log.info("[ AUTO UPLOADER ] Shutdown complete")
-        
-    def _validate_job_vacancy_payload(self, payload: dict) -> dict | None:
-        """
-        Validate and extract job vacancy payload.
-        Return extracted_data if valid, otherwise None.
-        """
-        if payload.get("type") != "job_vacancy":
-            log.debug("[ AUTO UPLOADER ] Skipping non-job_vacancy message")
-            return None
-
-        extracted = payload.get("extracted_data")
-        if not extracted:
-            log.warning("[ AUTO UPLOADER ] Empty payload")
-            return None
-
-        if not extracted.get("is_job_vacancy"):
-            log.debug("[ AUTO UPLOADER ] Not a job vacancy")
-            return None
-
-        image_base64 = payload.get("image")
-        image_url = payload.get("image_url")
-        if not image_base64 and not image_url:
-            log.warning("[ AUTO UPLOADER ] No image or image_url in payload - skipping")
-            return None
-
-        return extracted
-    
-    async def _handle_video_payload(self, video_url: str):
-        
-        loop = asyncio.get_running_loop()
-        
-        video_caption = "🎬 Rangkuman informasi lowongan kerja hari ini\n\n#lowongankerja #loker #jobvacancy"
-
-        # Upload to Instagram (Reels)
-        try:
-            if self.ig_uploader:
-                log.info("[ AUTO UPLOADER ] Uploading video to Instagram (Reels)...")
-                await loop.run_in_executor(
-                    None,
-                    self.ig_uploader.upload_video,
-                    video_url,
-                    video_caption,
-                    5,  # max_wait_minutes
-                )
-                log.info("[ AUTO UPLOADER ] Instagram reels upload complete")
-                
-        except Exception as e:
-            log.error(f"[ AUTO UPLOADER ] Instagram video upload failed: {e}", exc_info=True)
-
-        # Upload to Facebook
-        try:
-            if self.fb_uploader:
-                log.info("[ AUTO UPLOADER ] Uploading video to Facebook...")
-                await loop.run_in_executor(
-                    None,
-                    self.fb_uploader.upload_video_from_url,
-                    video_url,
-                    video_caption,
-                    "Rangkuman Lowongan Kerja Hari Ini"
-                )
-                log.info("[ AUTO UPLOADER ] Facebook video upload complete")
-
-        except Exception as e:
-            log.error(f"[ AUTO UPLOADER ] Facebook video upload failed: {e}", exc_info=True)
-        
-        # Clean up video from R2
-        finally:
-            try:
-                if self.storage:
-                    log.info("[ AUTO UPLOADER ] Cleaning up video from R2...")
-                    await loop.run_in_executor(
-                        None,
-                        self.storage.clean_video,
-                        video_url
-                    )
-                    log.info("[ AUTO UPLOADER ] Video cleanup complete")
-            except Exception as e:
-                log.error(f"[ AUTO UPLOADER ] Video cleanup failed: {e}", exc_info=True)
-                
-        return
 
     async def _handle_payload(self, payload: dict):
-        """
-        Handle incoming job vacancy payload from Redis
-        
-        Payload types:
-        
-        1. video_ready payload = {
-            "type": "video_ready",
-            "source": "video_worker",
-            "timestamp": payload.get("timestamp"),
-            "video": {
-                "path": video_url,
-                "format": "mp4",
-            },
-        }
-        
-        2. job_vacancy payload = {
-            "type": "job_vacancy",
-            "source": payload.get("source"),
-            "timestamp": payload.get("timestamp"),
-            "caption": payload.get("caption"),
-            "image": image_base64,
-            "extracted_data": extracted_data,
-        }
+        """Route incoming payloads to appropriate handler."""
 
-        extracted_data sample = {
-            "is_job_vacancy": true,
-            "email": ["recruitment@startup.id"],
-            "position": "Backend Developer",
-            "subject_email": "Backend Developer - {{name}} - {{phone}}",
-            "gender_required": null
-        }
-        """
-        
-        # ================================================================
         # Handle Video Ready
-        # ================================================================
         if payload.get("type") == "video_ready":
             video = payload.get("video", {})
             video_url = video.get("path")
-            
+
             if not video_url:
                 log.warning("[ AUTO UPLOADER ] Video ready but no path provided")
                 return
-            
-            await self._handle_video_payload(video_url)
 
-        # ================================================================
+            if self.video_handler:
+                await self.video_handler.handle(video_url)
+            return  # ← Fix: don't fall through to job_vacancy
+
         # Handle Job Vacancy (Image Post)
-        # ================================================================
-        data = self._validate_job_vacancy_payload(payload)
+        if not self.job_handler:
+            return
+
+        data = self.job_handler.validate_payload(payload)
         if not data:
             return
-        
-        # Check daily post limit
-        allowed = await can_post_today(
-            self.redis,
-            prefix="instagram:daily_posts",
-        )
-        
-        if not allowed:
-            log.warning("[ AUTO UPLOADER ] Daily post limit reached")
-            return
 
+        # Save image for video generation
         image_base64 = payload.get("image")
-        image_url = payload.get("image_url")
-
-        # ================================================================
-        # Save image for Video Generation
-        # ================================================================
         if self.media and image_base64:
             saved = await self.media.save_image(image_base64)
             if saved:
                 log.debug("[ AUTO UPLOADER ] Image saved for video generation")
-                
+
                 if self.media.should_generate_video():
-                    log.info("[ AUTO UPLOADER ] Enough images collected, triggering video generation...")
-                    asyncio.create_task(self._generate_and_publish_video(payload))
-            
+                    await self._try_generate_video()
+
+        # Process and upload job vacancy
+        await self.job_handler.handle(payload, data)
+
+    async def _try_generate_video(self):
+        """Trigger video generation with race-condition protection."""
+        async with self._video_gen_lock:
+            if self._video_generating:
+                log.debug("[ AUTO UPLOADER ] Video generation already in progress, skipping")
+                return
+            self._video_generating = True
+
+        log.info("[ AUTO UPLOADER ] Enough images collected, triggering video generation...")
+        asyncio.create_task(self._generate_and_publish_video())
+
+    async def _generate_and_publish_video(self):
+        """Background task to generate video and trigger posting."""
         try:
-            loop = asyncio.get_running_loop()
-            
-            position: str | None = data.get("position")
-            emails: list[str] | None = data.get("email")
-            gender_required: str | None = data.get("gender_required")
-            
-            image_url = None
-            
-            # ============================================================
-            # STEP 1 & 2: Get public image URL
-            # ============================================================
-            if image_url:
-                log.info(f"[ AUTO UPLOADER ] Using provided public URL: {image_url}")
-            elif image_base64:
-                # Fallback: Process and upload if no URL provided
-                try:
-                    if self.image_processor:
-                        log.info("[ AUTO UPLOADER ] Processing image for Instagram...")
-                        
-                        # Get original image info
-                        image_info = await loop.run_in_executor(
-                            None,
-                            self.image_processor.get_image_info,
-                            image_base64
-                        )
-                        
-                        log.info(
-                            f"[ AUTO UPLOADER ] Original image: "
-                            f"{image_info.get('width')}x{image_info.get('height')} "
-                            f"(ratio: {image_info.get('aspect_ratio', 0):.2f})"
-                        )
-                        
-                        # Process image if not valid for Instagram
-                        if not image_info.get('is_valid_for_instagram'):
-                            log.info("[ AUTO UPLOADER ] Image needs processing for Instagram")
-                            
-                            processed_image = await loop.run_in_executor(
-                                None,
-                                self.image_processor.process_base64_image,
-                                image_base64,
-                                "pad",  # or "crop"
-                                95
-                            )
-                            
-                            image_base64 = processed_image
-                            log.info("[ AUTO UPLOADER ] Image processing complete")
-                        else:
-                            log.info("[ AUTO UPLOADER ] Image already valid for Instagram, skipping processing")
-                            
-                except Exception as e:
-                    log.error(f"[ AUTO UPLOADER ] Image processing failed: {e}", exc_info=True)
-                    log.warning("[ AUTO UPLOADER ] Continuing with original image...")
-                
-                try:
-                    if self.storage:
-                        log.info("[ AUTO UPLOADER ] Uploading image to R2...")
-                        image_url = await loop.run_in_executor(
-                            None,
-                            self.storage.upload_base64_image,
-                            image_base64,
-                        )
-                        log.info(f"[ AUTO UPLOADER ] R2 upload success: {image_url}")
-                    else:
-                        log.error("[ AUTO UPLOADER ] R2 storage not initialized")
-                        return
-                        
-                except Exception as e:
-                    log.error(f"[ AUTO UPLOADER ] R2 upload failed: {e}", exc_info=True)
-                    return  # Cannot continue without R2 URL
-            else:
-                log.warning("[ AUTO UPLOADER ] No image or URL to post")
+            start_time = asyncio.get_running_loop().time()
+
+            if not self.media:
                 return
 
-            # ============================================================
-            # STEP 3: Upload to Instagram using R2 URL
-            # ============================================================
-            try:
-                if self.ig_uploader and image_url:
-                    log.info("[ AUTO UPLOADER ] Uploading to Instagram...")
-        
-                    result = await loop.run_in_executor(
-                        None,
-                        self.ig_uploader.upload_image,
-                        position,
-                        emails,
-                        gender_required,
-                        image_url,
-                    )
-                    
-                    media_id = result.get("id")
-                    
-                    if media_id:
-                        await increment_daily_post(
-                            self.redis,
-                            prefix="instagram:daily_posts",
-                        )
-    
-                        log.info(f"[ AUTO UPLOADER ] Instagram upload success: {media_id}")
-                    else:
-                        log.warning("[ AUTO UPLOADER ] Instagram upload returned no media_id")
-                    
-                elif not image_url:
-                    log.warning("[ AUTO UPLOADER ] Skipping Instagram upload - no public image URL")
-                    
-                elif not self.ig_uploader:
-                    log.warning("[ AUTO UPLOADER ] Instagram uploader not initialized")
-                    
-            except Exception as e:
-                log.error(f"[ AUTO UPLOADER ] Instagram upload failed: {e}", exc_info=True)
+            video_url = await self.media.generate_and_upload_video()
 
-            # STEP 4: Upload to Facebook
-            try:
-                if self.fb_uploader:
-                    if image_url:
-                        log.info("[ AUTO UPLOADER ] Uploading to Facebook via URL...")
-                        result = await loop.run_in_executor(
-                            None,
-                            self.fb_uploader.upload_image_from_url,
-                            image_url,
-                            position,
-                            emails,
-                            gender_required,
-                        )
-                    elif image_base64:
-                        log.info("[ AUTO UPLOADER ] Uploading to Facebook via base64...")
-                        result = await loop.run_in_executor(
-                            None,
-                            self.fb_uploader.upload_image,
-                            image_base64,
-                            position,
-                            emails,
-                            gender_required,
-                        )
-            
-            except Exception as e:
-                log.error(f"[ AUTO UPLOADER ] Facebook upload failed: {e}", exc_info=True)
-
-        except Exception as e:
-            log.error(
-                f"[ AUTO UPLOADER ] Failed to process job vacancy: {e}",
-                exc_info=True
-            )
-
-    async def _generate_and_publish_video(self, payload: dict):
-        """
-        Background task to generate video and trigger posting.
-        """
-        try:
-            start_time = asyncio.get_event_loop().time()
-            
-            if self.media:
-                video_url = await self.media.generate_and_upload_video()
-            else:
-                return
-            
             if not video_url:
                 log.error("[ AUTO UPLOADER ] Failed to generate video")
                 return
 
-            duration = asyncio.get_event_loop().time() - start_time
-            log.info(f"[ AUTO UPLOADER ] Video generated and uploaded in {duration:.2f}s: {video_url}")
+            duration = asyncio.get_running_loop().time() - start_time
+            log.info(f"[ AUTO UPLOADER ] Video generated in {duration:.2f}s: {video_url}")
 
-            # Directly handle the video payload instead of publishing back to Redis
-            await self._handle_video_payload(video_url)
+            if self.video_handler:
+                await self.video_handler.handle(video_url)
 
         except Exception as e:
             log.error(f"[ AUTO UPLOADER ] Error in background video task: {e}", exc_info=True)
-    
+        finally:
+            self._video_generating = False
+
+
 async def main():
     shutdown_event = asyncio.Event()
-    
+
     def signal_handler(sig):
         log.info(f"[ AUTO UPLOADER ] Received signal {sig}, initiating shutdown...")
         shutdown_event.set()
-    
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
-    
+
     try:
         async with AutoUploader():
             log.info("[ AUTO UPLOADER ] Running...")
@@ -487,9 +250,6 @@ async def main():
     finally:
         log.info("[ AUTO UPLOADER ] Exiting...")
 
+
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
-            

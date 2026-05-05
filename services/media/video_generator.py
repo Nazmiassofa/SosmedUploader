@@ -1,57 +1,44 @@
+## services/media/video_generator.py
 """
-Video generation service using MoviePy - Low Memory Version
+Video generation service using FFmpeg subprocess — fast and memory-efficient.
 """
+
 import logging
-from typing import List, Optional, Tuple
-from PIL import Image, ImageOps
 import os
 import random
-import numpy as np
+import subprocess
+import tempfile
+from typing import List, Optional, Tuple
 
-# Pillow >=10 compatibility for MoviePy
-if not hasattr(Image, "ANTIALIAS"):
-    Image.ANTIALIAS = Image.Resampling.LANCZOS # type: ignore
-
-from moviepy.editor import (
-    ImageClip,
-    concatenate_videoclips,
-    CompositeVideoClip,
-    ColorClip,
-    AudioFileClip
-)
+from PIL import Image, ImageOps
 
 log = logging.getLogger(__name__)
 
 SOUNDTRACK_DIR = "data/templates/sound"
 
+
 class VideoGenerator:
-    """Generates slideshow videos from images - Low Memory Version"""
-    
+    """Generates slideshow videos from images using FFmpeg directly."""
+
     def __init__(
         self,
         resolution: Tuple[int, int] = (720, 1280),
         duration_per_image: float = 3.0,
         fps: int = 24,
-        background_color: Tuple[int, int, int] = (255, 255, 255)  # White background
+        background_color: Tuple[int, int, int] = (255, 255, 255),
     ):
-        self.resolution = resolution
+        self.resolution = resolution  # (width, height)
         self.duration_per_image = duration_per_image
         self.fps = fps
         self.background_color = background_color
-        
-        
+
     def _pick_random_audio(self) -> Optional[str]:
-        """
-        Pick one random audio file from SOUNDTRACK_DIR
-        Returns path to audio file or None
-        """
+        """Pick one random audio file from SOUNDTRACK_DIR"""
         if not os.path.isdir(SOUNDTRACK_DIR):
             log.warning(f"[ VIDEO ] Sound directory not found: {SOUNDTRACK_DIR}")
             return None
 
-        # Common audio extensions MoviePy can handle
         audio_exts = (".mp3", ".wav", ".aac", ".m4a", ".ogg")
-
         audio_files = [
             os.path.join(SOUNDTRACK_DIR, f)
             for f in os.listdir(SOUNDTRACK_DIR)
@@ -62,175 +49,165 @@ class VideoGenerator:
             log.warning("[ VIDEO ] No audio files found in sound directory")
             return None
 
-        # If only one file, use it directly
-        if len(audio_files) == 1:
-            return audio_files[0]
+        return audio_files[0] if len(audio_files) == 1 else random.choice(audio_files)
 
-        # Pick random if more than one
-        return random.choice(audio_files)
-    
+    def _prepare_image(self, img_path: str, output_path: str) -> bool:
+        """
+        Pre-process a single image: fix orientation, fit within resolution,
+        center on background. Saves as PNG for lossless FFmpeg input.
+        """
+        try:
+            with Image.open(img_path) as img:
+                # Fix EXIF orientation
+                img = ImageOps.exif_transpose(img)
+
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+
+                target_w, target_h = self.resolution
+                orig_w, orig_h = img.size
+
+                # Scale to fit within target resolution (maintain aspect ratio)
+                scale = min(target_w / orig_w, target_h / orig_h)
+                new_w = int(orig_w * scale)
+                new_h = int(orig_h * scale)
+
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                # Center on background
+                bg = Image.new("RGB", (target_w, target_h), self.background_color)
+                paste_x = (target_w - new_w) // 2
+                paste_y = (target_h - new_h) // 2
+                bg.paste(img, (paste_x, paste_y))
+
+                bg.save(output_path, format="PNG")
+
+            return True
+        except Exception as e:
+            log.error(f"[ VIDEO ] Failed to prepare image {img_path}: {e}")
+            return False
+
     def generate(self, image_paths: List[str], output_path: str) -> bool:
         """
-        Generate slideshow video from images
-        
+        Generate slideshow video from images using FFmpeg.
+
         Args:
             image_paths: List of paths to image files
             output_path: Path where video should be saved
-            
+
         Returns:
-            bool: True if successful, False otherwise
+            True if successful, False otherwise
         """
-        clips = []
-        final_clip = None
-        audio_clip = None
-        
+        if not image_paths:
+            log.error("[ VIDEO ] No image paths provided")
+            return False
+
+        # Verify ffmpeg is available
         try:
-            for img_path in image_paths:
-                clip = self._create_composite_clip(img_path)
-                if clip:
-                    clips.append(clip)
-            
-            if not clips:
-                log.error("[ VIDEO ] No clips created")
-                return False
-            
-            # Concatenate all clips
-            final_clip = concatenate_videoclips(clips, method="compose")
-            
-            # Add audio if soundtrack exists
-            try:
-                audio_path = self._pick_random_audio()
-                if audio_path:                    
-                    audio_clip = AudioFileClip(audio_path)
-                    
-                    # Loop audio to match video duration
-                    video_duration = final_clip.duration
-                    if audio_clip.duration < video_duration:
-                        loops = int(video_duration / audio_clip.duration) + 1
-                        audio_clip = audio_clip.audio_loop(n=loops) # type: ignore
-                    
-                    # Trim audio to exact video duration
-                    audio_clip = audio_clip.subclip(0, video_duration)
-                    
-                    # Set audio to video
-                    final_clip = final_clip.set_audio(audio_clip)
-                    log.info(f"[ VIDEO ] Audio added from {audio_path}")
-                else:
-                    log.warning(f"[ VIDEO ] No audio file provided - [ skip audio ]")
-            except Exception as e:
-                log.warning(f"[ VIDEO ] Failed to add audio: {e}")
-            
-            # Write video file
-            final_clip.write_videofile(
-                output_path,
-                fps=self.fps,
-                codec="libx264",
-                audio_codec="aac",
-                threads=1,
-                preset="ultrafast",
-                logger=None  # Suppress MoviePy's verbose output
+            subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True, check=True,
             )
-            
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            log.error("[ VIDEO ] FFmpeg not found. Install ffmpeg first.")
+            return False
+
+        temp_dir = None
+        try:
+            # Create temp directory for processed images
+            temp_dir = tempfile.mkdtemp(prefix="video_gen_")
+
+            # Pre-process all images (EXIF fix, resize, center)
+            prepared_paths: List[str] = []
+            for i, img_path in enumerate(image_paths):
+                prepared_path = os.path.join(temp_dir, f"frame_{i:04d}.png")
+                if self._prepare_image(img_path, prepared_path):
+                    prepared_paths.append(prepared_path)
+                else:
+                    log.warning(f"[ VIDEO ] Skipping {img_path}")
+
+            if not prepared_paths:
+                log.error("[ VIDEO ] No images could be prepared")
+                return False
+
+            # Create FFmpeg concat demuxer file
+            concat_file = os.path.join(temp_dir, "concat.txt")
+            with open(concat_file, "w") as f:
+                for path in prepared_paths:
+                    # Escape single quotes in path
+                    safe_path = path.replace("'", "'\\''")
+                    f.write(f"file '{safe_path}'\n")
+                    f.write(f"duration {self.duration_per_image}\n")
+                # Repeat last frame to avoid black frame at end
+                safe_last = prepared_paths[-1].replace("'", "'\\''")
+                f.write(f"file '{safe_last}'\n")
+
+            # Build FFmpeg command
+            width, height = self.resolution
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_file,
+            ]
+
+            # Add audio if available
+            audio_path = self._pick_random_audio()
+            if audio_path:
+                cmd.extend(["-i", audio_path])
+
+            # Video encoding settings
+            cmd.extend([
+                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=disable",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-pix_fmt", "yuv420p",
+                "-r", str(self.fps),
+            ])
+
+            # Audio settings
+            if audio_path:
+                total_duration = len(prepared_paths) * self.duration_per_image
+                cmd.extend([
+                    "-c:a", "aac",
+                    "-b:a", "128k",
+                    "-shortest",
+                    "-t", str(total_duration),
+                ])
+            else:
+                cmd.extend(["-an"])
+
+            cmd.append(output_path)
+
+            log.info(f"[ VIDEO ] Generating video with {len(prepared_paths)} images...")
+            log.debug(f"[ VIDEO ] FFmpeg command: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+
+            if result.returncode != 0:
+                log.error(f"[ VIDEO ] FFmpeg failed:\n{result.stderr[-500:]}")
+                return False
+
             log.info(f"[ VIDEO ] Video generated: {output_path}")
             return True
-            
+
+        except subprocess.TimeoutExpired:
+            log.error("[ VIDEO ] FFmpeg timed out after 300 seconds")
+            return False
         except Exception as e:
             log.error(f"[ VIDEO ] Failed to generate video: {e}", exc_info=True)
             return False
-            
         finally:
-            # Clean up clips
-            for clip in clips:
+            # Clean up temp directory
+            if temp_dir and os.path.exists(temp_dir):
                 try:
-                    clip.close()
+                    for f in os.listdir(temp_dir):
+                        os.remove(os.path.join(temp_dir, f))
+                    os.rmdir(temp_dir)
                 except Exception as e:
-                    log.warning(f"[ VIDEO ] Failed to close clip: {e}")
-            
-            if audio_clip:
-                try:
-                    audio_clip.close()
-                except Exception as e:
-                    log.warning(f"[ VIDEO ] Failed to close audio clip: {e}")
-            
-            if final_clip:
-                try:
-                    final_clip.close()
-                except Exception as e:
-                    log.warning(f"[ VIDEO ] Failed to close final clip: {e}")
-    
-    def _create_composite_clip(self, img_path: str) -> Optional[CompositeVideoClip]:
-        """
-        Create composite clip with solid color background and centered foreground
-        
-        Args:
-            img_path: Path to image file
-            
-        Returns:
-            CompositeVideoClip or None if failed
-        """
-        try:
-            # Create solid color background (no processing needed - very light on memory)
-            bg_clip = ColorClip(
-                size=self.resolution,
-                color=self.background_color,
-                duration=self.duration_per_image
-            )
-            
-            # Create foreground (maintains aspect ratio)
-            fg_clip = self._create_foreground_clip(img_path)
-            
-            # Composite both layers
-            composite = CompositeVideoClip(
-                [
-                    bg_clip,
-                    fg_clip.set_position("center")
-                ],
-                size=self.resolution
-            )
-            
-            return composite
-            
-        except Exception as e:
-            log.error(f"[ VIDEO ] Failed to create clip for {img_path}: {e}")
-            return None
-    
-    def _create_foreground_clip(self, img_path: str) -> ImageClip:
-        """
-        Create foreground clip that fits within resolution without stretching.
-        Uses PIL for robust image loading and orientation handling.
-        
-        Args:
-            img_path: Path to image file
-            
-        Returns:
-            ImageClip: Properly sized foreground clip
-        """
-        # Load image with PIL to handle EXIF and orientation correctly
-        with Image.open(img_path) as img:
-            # Fix orientation based on EXIF (crucial for phone photos)
-            img = ImageOps.exif_transpose(img)
-            
-            # Convert to RGB to ensure compatibility and consistency
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-                
-            # Get original dimensions after orientation fix
-            original_width, original_height = img.size
-            target_width, target_height = self.resolution
-            
-            # Calculate scaling factor to fit within target resolution
-            width_ratio = target_width / original_width
-            height_ratio = target_height / original_height
-            scale_factor = min(width_ratio, height_ratio)
-            
-            # Calculate new dimensions
-            new_width = int(original_width * scale_factor)
-            new_height = int(original_height * scale_factor)
-            
-            # Resize using PIL (more reliable than MoviePy's internal resize)
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            
-            # Create ImageClip from the processed numpy array
-            clip = ImageClip(np.array(img))
-            
-        return clip.set_duration(self.duration_per_image)
+                    log.warning(f"[ VIDEO ] Temp cleanup failed: {e}")

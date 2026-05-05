@@ -5,7 +5,11 @@ import boto3
 import uuid
 import datetime
 import mimetypes
+import logging
 from typing import Optional
+
+log = logging.getLogger(__name__)
+
 
 class R2UploaderService:
     def __init__(
@@ -13,11 +17,11 @@ class R2UploaderService:
         account_id: str,
         access_key: str,
         secret_key: str,
-        bucket: Optional[str] = "media-job",
-        public_base_url: Optional[str] = "https://media.mailezz.com",
+        bucket: str,
+        public_base_url: str,
     ):
         self.bucket = bucket
-        self.public_base = public_base_url.rstrip("/") if public_base_url else None
+        self.public_base = public_base_url.rstrip("/")
 
         self.client = boto3.client(
             "s3",
@@ -33,11 +37,29 @@ class R2UploaderService:
         folder: str = "jobs",
         ext: str = "jpg",
     ) -> str:
+        """Upload a base64-encoded image to R2"""
         image_bytes = base64.b64decode(image_base64)
+        return self.upload_image_bytes(image_bytes, folder=folder, ext=ext)
 
+    def upload_image_bytes(
+        self,
+        image_bytes: bytes,
+        folder: str = "jobs",
+        ext: str = "jpg",
+    ) -> str:
+        """
+        Upload raw image bytes to R2 — avoids redundant base64 round-trip.
+        
+        Args:
+            image_bytes: Raw image bytes
+            folder: R2 folder prefix
+            ext: File extension
+            
+        Returns:
+            Public URL of the uploaded image
+        """
         today = datetime.datetime.now()
         filename = f"{uuid.uuid4().hex}.{ext}"
-
         key = f"{folder}/{today.year}/{today.month:02d}/{filename}"
 
         content_type = mimetypes.types_map.get(f".{ext}", "image/jpeg")
@@ -50,13 +72,16 @@ class R2UploaderService:
             ACL="public-read",
         )
 
-        return f"{self.public_base}/{key}"
+        url = f"{self.public_base}/{key}"
+        log.debug(f"[ R2 ] Uploaded image: {url}")
+        return url
 
     def upload_video(
         self,
         file_path: str,
         folder: str = "jobs/videos"
     ) -> str:
+        """Upload a video file to R2"""
         filename = f"{uuid.uuid4().hex}.mp4"
         key = f"{folder}/{filename}"
 
@@ -69,24 +94,20 @@ class R2UploaderService:
                 ACL="public-read",
             )
 
-        return f"{self.public_base}/{key}"
-    
-    
+        url = f"{self.public_base}/{key}"
+        log.info(f"[ R2 ] Uploaded video: {url}")
+        return url
     
     def clean_video(self, video_url: str) -> bool:
         """
-        Delete video object from R2 using public URL
+        Delete video object from R2 using public URL.
 
         Args:
             video_url: Public video URL from R2
 
         Returns:
-            True if deleted successfully, False otherwise
+            True if deleted successfully
         """
-
-        if not self.public_base:
-            raise ValueError("public_base_url is not configured")
-
         if not video_url.startswith(self.public_base):
             raise ValueError("Video URL does not belong to this R2 public base")
 
@@ -101,7 +122,7 @@ class R2UploaderService:
                 Bucket=self.bucket,
                 Key=key,
             )
-
+            log.info(f"[ R2 ] Deleted: {key}")
             return True
 
         except Exception as e:
