@@ -6,10 +6,10 @@ from config.settings import config
 
 def setup_logging():
     
-    os.makedirs("log", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
     
     handlers = [
-        logging.FileHandler("log/bot.log"),
+        logging.FileHandler("logs/bot.log"),
         logging.StreamHandler()
     ]
 

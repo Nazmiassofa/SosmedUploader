@@ -3,7 +3,7 @@
 import base64
 import io
 import logging
-from PIL import Image
+from PIL import Image, ImageOps
 from typing import Tuple
 
 log = logging.getLogger(__name__)
@@ -174,6 +174,9 @@ class ImageProcessor:
             image_bytes = base64.b64decode(image_base64)
             image = Image.open(io.BytesIO(image_bytes))
             
+            # Fix orientation based on EXIF
+            image = ImageOps.exif_transpose(image)
+            
             original_size = image.size
             log.info(f"[ IMAGE PROCESSOR ] Original size: {original_size[0]}x{original_size[1]}")
             
@@ -210,6 +213,9 @@ class ImageProcessor:
         try:
             image_bytes = base64.b64decode(image_base64)
             image = Image.open(io.BytesIO(image_bytes))
+            
+            # Fix orientation based on EXIF
+            image = ImageOps.exif_transpose(image)
             
             width, height = image.size
             aspect_ratio = width / height

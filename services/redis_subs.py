@@ -106,22 +106,3 @@ class RedisSubscriber:
             log.error("[ SUBSCRIBER ] Invalid JSON payload")
         except Exception as e:
             log.error("[ SUBSCRIBER ] Message handler error", exc_info=e)
-            
-            
-"""
-
-image_base64 = base64.b64encode(image_bytes).decode("utf-8") 
-redis_payload = { 
-"type": "job_vacancy", 
-"source": payload.get("source"), 
-"timestamp": payload.get("timestamp"), 
-"caption": payload.get("caption"), 
-"image": image_base64, "extracted_data": extracted_data, } 
-
-extracted_data sample = { 
-"is_job_vacancy": true, 
-"email": ["recruitment@startup.id"], 
-"position": "Backend Developer", 
-"subject_email": "Backend Developer - {{name}} - {{phone}}", "gender_required": null }
-
-"""

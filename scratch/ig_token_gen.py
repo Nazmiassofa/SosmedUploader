@@ -1,6 +1,9 @@
 import os
 import httpx
+import asyncio
+
 from dotenv import load_dotenv
+
 
 # Load .env from the project root
 env_path = "/home/nazmiassofa/dev/SosmedUploader/.env"
@@ -128,5 +131,4 @@ async def run_generator():
             print(f"Threads Error: {e}")
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(run_generator())

@@ -3,9 +3,10 @@ Video generation service using MoviePy - Low Memory Version
 """
 import logging
 from typing import List, Optional, Tuple
-from PIL import Image
+from PIL import Image, ImageOps
 import os
 import random
+import numpy as np
 
 # Pillow >=10 compatibility for MoviePy
 if not hasattr(Image, "ANTIALIAS"):
@@ -195,7 +196,8 @@ class VideoGenerator:
     
     def _create_foreground_clip(self, img_path: str) -> ImageClip:
         """
-        Create foreground clip that fits within resolution without stretching
+        Create foreground clip that fits within resolution without stretching.
+        Uses PIL for robust image loading and orientation handling.
         
         Args:
             img_path: Path to image file
@@ -203,22 +205,32 @@ class VideoGenerator:
         Returns:
             ImageClip: Properly sized foreground clip
         """
-        clip = ImageClip(img_path)
-        
-        # Get original dimensions
-        original_width, original_height = clip.size
-        target_width, target_height = self.resolution
-        
-        # Calculate scaling factor to fit within target resolution
-        width_ratio = target_width / original_width
-        height_ratio = target_height / original_height
-        scale_factor = min(width_ratio, height_ratio)
-        
-        # Calculate new dimensions
-        new_width = int(original_width * scale_factor)
-        new_height = int(original_height * scale_factor)
-        
-        # Resize maintaining aspect ratio using tuple (width, height)
-        resized_clip = clip.resize((new_width, new_height)) # type: ignore
-        
-        return resized_clip.set_duration(self.duration_per_image)
+        # Load image with PIL to handle EXIF and orientation correctly
+        with Image.open(img_path) as img:
+            # Fix orientation based on EXIF (crucial for phone photos)
+            img = ImageOps.exif_transpose(img)
+            
+            # Convert to RGB to ensure compatibility and consistency
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+                
+            # Get original dimensions after orientation fix
+            original_width, original_height = img.size
+            target_width, target_height = self.resolution
+            
+            # Calculate scaling factor to fit within target resolution
+            width_ratio = target_width / original_width
+            height_ratio = target_height / original_height
+            scale_factor = min(width_ratio, height_ratio)
+            
+            # Calculate new dimensions
+            new_width = int(original_width * scale_factor)
+            new_height = int(original_height * scale_factor)
+            
+            # Resize using PIL (more reliable than MoviePy's internal resize)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Create ImageClip from the processed numpy array
+            clip = ImageClip(np.array(img))
+            
+        return clip.set_duration(self.duration_per_image)
